@@ -7,7 +7,6 @@ from pathlib import Path
 import os
 import streamlit as st
 import matplotlib.pyplot as plt
-from io import BytesIO
 
 class ImageQualityStreamlitApp:
     def __init__(self):

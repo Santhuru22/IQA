@@ -19,14 +19,16 @@ class ImageQualityStreamlitApp:
     def load_model_from_upload(self, model_file, config_file):
         """Load the trained model and configuration from uploaded files"""
         try:
-            # Load model from uploaded .h5 file
-            model_buffer = BytesIO(model_file.getvalue())
-            # Save to a temporary file since TensorFlow prefers file paths
-            with tempfile.NamedTemporaryFile(delete=False, suffix=".h5") as tmp_file:
-                tmp_file.write(model_buffer.getvalue())
-                tmp_file_path = tmp_file.name
-            self.model = tf.keras.models.load_model(tmp_file_path)
-            os.unlink(tmp_file_path)  # Clean up temporary file
+            # Save the uploaded model file to a temporary file
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".h5") as tmp_model_file:
+                tmp_model_file.write(model_file.getvalue())
+                tmp_model_path = tmp_model_file.name
+            
+            # Load the model from the temporary file
+            self.model = tf.keras.models.load_model(tmp_model_path)
+            
+            # Clean up the temporary model file
+            os.unlink(tmp_model_path)
 
             # Load configuration from uploaded .json file
             config_buffer = BytesIO(config_file.getvalue())
@@ -87,6 +89,10 @@ class ImageQualityStreamlitApp:
         image_resized = cv2.resize(image_rgb, img_size)
         image_processed = image_resized.astype(np.float32) / 255.0
         image_processed = np.expand_dims(image_processed, axis=0)  # Add batch dimension
+
+        # Apply global average pooling to match the dense layer input
+        image_processed = tf.keras.layers.GlobalAveragePooling2D()(image_processed)
+        image_processed = image_processed.numpy()
 
         return image_processed
 

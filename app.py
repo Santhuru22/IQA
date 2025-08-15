@@ -8,7 +8,6 @@ import os
 import streamlit as st
 import matplotlib.pyplot as plt
 from io import BytesIO
-import tempfile
 
 class ImageQualityStreamlitApp:
     def __init__(self):
@@ -16,24 +15,33 @@ class ImageQualityStreamlitApp:
         self.model = None
         self.model_config = None
         
-    def load_model_from_upload(self, model_file, config_file):
-        """Load the trained model and configuration from uploaded files"""
+    def load_model_from_path(self, model_dir):
+        """Load the trained model and configuration from specified path"""
         try:
-            # Load model from uploaded .h5 file
-            model_buffer = BytesIO(model_file.getvalue())
-            # Save to a temporary file since TensorFlow prefers file paths
-            with tempfile.NamedTemporaryFile(delete=False, suffix=".h5") as tmp_file:
-                tmp_file.write(model_buffer.getvalue())
-                tmp_file_path = tmp_file.name
-            self.model = tf.keras.models.load_model(tmp_file_path)
-            os.unlink(tmp_file_path)  # Clean up temporary file
+            if not os.path.exists(model_dir):
+                return False, f"Model directory not found: {model_dir}"
 
-            # Load configuration from uploaded .json file
-            config_buffer = BytesIO(config_file.getvalue())
-            config_buffer.seek(0)  # Ensure we start from the beginning
-            self.model_config = json.load(config_buffer)
+            model_path = Path(model_dir) / 'image_quality_model.h5'
+            config_path = Path(model_dir) / 'model_config.json'
 
-            return True, "Model loaded successfully from uploaded files"
+            if not model_path.exists():
+                return False, "Model file 'image_quality_model.h5' not found in the specified directory!"
+
+            if not config_path.exists():
+                return False, "Model configuration file 'model_config.json' not found!"
+
+            # Load model with caching for better performance
+            @st.cache_resource
+            def load_tf_model(model_path):
+                return tf.keras.models.load_model(str(model_path))
+
+            self.model = load_tf_model(model_path)
+
+            # Load configuration
+            with open(config_path, 'r') as f:
+                self.model_config = json.load(f)
+
+            return True, f"Model loaded successfully from: {model_dir}"
 
         except Exception as e:
             return False, f"Failed to load model: {str(e)}"
@@ -88,10 +96,6 @@ class ImageQualityStreamlitApp:
         image_processed = image_resized.astype(np.float32) / 255.0
         image_processed = np.expand_dims(image_processed, axis=0)  # Add batch dimension
 
-        # Apply global average pooling to match the dense layer input
-        image_processed = tf.keras.layers.GlobalAveragePooling2D()(image_processed)
-        image_processed = image_processed.numpy()
-
         return image_processed
 
     def predict_image_quality(self, image):
@@ -136,18 +140,21 @@ def main():
     st.title("🖼️ Image Quality Classifier")
     st.markdown("---")
 
-    # Sidebar for model upload
+    # Sidebar for model configuration
     with st.sidebar:
-        st.header("📁 Model Upload")
+        st.header("📁 Model Configuration")
         
-        # File uploaders for model and config
-        model_file = st.file_uploader("Upload Model File (image_quality_model.h5)", type=['h5'])
-        config_file = st.file_uploader("Upload Configuration File (model_config.json)", type=['json'])
+        # Model path input
+        model_dir = st.text_input(
+            "Model Directory Path",
+            value="./IQA",
+            help="Path to directory containing image_quality_model.h5 and model_config.json"
+        )
         
         # Load model button
-        if st.button("🔄 Load Model", type="primary", use_container_width=True) and model_file and config_file:
+        if st.button("🔄 Load Model", type="primary", use_container_width=True):
             with st.spinner("Loading model..."):
-                success, message = app.load_model_from_upload(model_file, config_file)
+                success, message = app.load_model_from_path(model_dir)
                 
                 if success:
                     st.success(message)

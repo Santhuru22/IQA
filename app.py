@@ -21,8 +21,8 @@ class ImageQualityStreamlitApp:
             if not os.path.exists(model_dir):
                 return False, f"Model directory not found: {model_dir}"
 
-            model_path = 'image_quality_model.h5'
-            config_path = 'model_config.json'
+            model_path = Path(model_dir) / 'image_quality_model.h5'
+            config_path = Path(model_dir) / 'model_config.json'
 
             if not model_path.exists():
                 return False, "Model file 'image_quality_model.h5' not found in the specified directory!"

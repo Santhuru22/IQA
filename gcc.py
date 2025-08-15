@@ -85,14 +85,10 @@ class ImageQualityStreamlitApp:
         else:
             image_rgb = cv2.cvtColor(image_array, cv2.COLOR_BGR2RGB)
             
-        # Resize image
+        # Resize image to match model input
         image_resized = cv2.resize(image_rgb, img_size)
         image_processed = image_resized.astype(np.float32) / 255.0
         image_processed = np.expand_dims(image_processed, axis=0)  # Add batch dimension
-
-        # Apply global average pooling to match the dense layer input
-        image_processed = tf.keras.layers.GlobalAveragePooling2D()(image_processed)
-        image_processed = image_processed.numpy()
 
         return image_processed
 

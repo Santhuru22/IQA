@@ -122,7 +122,7 @@ class ImageQualityStreamlitApp:
 
 def main():
     # Use the current directory for model files (as shown in your screenshot)
-    MODEL_DIR = "./IQA"  
+    MODEL_DIR = "./"  
 
     st.set_page_config(
         page_title="Image Quality Classifier",

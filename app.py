@@ -49,8 +49,19 @@ class ImageQualityStreamlitApp:
     def _try_load_model(self, model_path):
         """Try different approaches to load the model"""
         
-        # Approach 1: Standard loading with compile=False
+        # Approach 1: Load weights only and reconstruct architecture
         try:
+            st.info("🔄 Trying to reconstruct model from weights...")
+            model = self._reconstruct_model_architecture()
+            if model is not None:
+                model.load_weights(str(model_path))
+                return True, model, None
+        except Exception as e0:
+            st.warning(f"Architecture reconstruction failed: {str(e0)}")
+        
+        # Approach 2: Standard loading with compile=False
+        try:
+            st.info("🔄 Trying standard model loading...")
             model = tf.keras.models.load_model(str(model_path), compile=False)
             # Recompile the model
             model.compile(
@@ -62,32 +73,231 @@ class ImageQualityStreamlitApp:
         except Exception as e1:
             st.warning(f"Standard loading failed: {str(e1)}")
         
-        # Approach 2: Load with custom objects (if needed)
+        # Approach 3: Load with safe_mode (TF 2.11+)
         try:
-            model = tf.keras.models.load_model(str(model_path), custom_objects={}, compile=False)
+            st.info("🔄 Trying safe mode loading...")
+            if hasattr(tf.keras.models, 'load_model'):
+                # Try with safe_mode if available
+                model = tf.keras.models.load_model(str(model_path), compile=False, safe_mode=False)
+                model.compile(
+                    optimizer='adam',
+                    loss='binary_crossentropy',
+                    metrics=['accuracy']
+                )
+                return True, model, None
+        except Exception as e2:
+            st.warning(f"Safe mode loading failed: {str(e2)}")
+        
+        # Approach 4: Try to load just the weights and create a simple model
+        try:
+            st.info("🔄 Trying simple model reconstruction...")
+            model = self._create_simple_model()
+            if model is not None:
+                # Try to load weights - this might fail if architectures don't match
+                model.load_weights(str(model_path))
+                return True, model, None
+        except Exception as e3:
+            st.warning(f"Simple model reconstruction failed: {str(e3)}")
+        
+        # Approach 5: Manual architecture fix
+        try:
+            st.info("🔄 Trying manual architecture fix...")
+            return self._try_manual_fix(model_path)
+        except Exception as e4:
+            return False, None, f"All loading approaches failed. Last error: {str(e4)}"
+
+    def _reconstruct_model_architecture(self):
+        """Reconstruct a common image quality model architecture"""
+        try:
+            if not self.model_config:
+                return None
+                
+            img_size = self.model_config.get('img_size', [224, 224])
+            
+            # Common architecture for image quality assessment
+            # Base model (typically a pre-trained CNN)
+            base_model = tf.keras.applications.MobileNetV2(
+                input_shape=(*img_size, 3),
+                weights='imagenet',
+                include_top=False,
+                pooling='avg'
+            )
+            
+            # Freeze base model
+            base_model.trainable = False
+            
+            # Add custom classification head
+            inputs = tf.keras.Input(shape=(*img_size, 3))
+            x = base_model(inputs, training=False)
+            x = tf.keras.layers.GlobalAveragePooling2D()(x)
+            x = tf.keras.layers.Dropout(0.2)(x)
+            outputs = tf.keras.layers.Dense(1, activation='sigmoid', name='quality_prediction')(x)
+            
+            model = tf.keras.Model(inputs, outputs)
             model.compile(
                 optimizer='adam',
                 loss='binary_crossentropy',
                 metrics=['accuracy']
             )
-            return True, model, None
-        except Exception as e2:
-            st.warning(f"Custom objects loading failed: {str(e2)}")
-        
-        # Approach 3: Try loading weights only (if this fails, we'll create a reconstruction method)
-        try:
-            # This approach would require the model architecture to be defined
-            # For now, we'll return the error
-            return False, None, f"All loading approaches failed. Last error: {str(e2)}"
-        except Exception as e3:
-            return False, None, str(e3)
+            
+            return model
+            
+        except Exception as e:
+            st.warning(f"Failed to reconstruct MobileNetV2 architecture: {e}")
+            return None
 
-    def create_model_from_config(self):
-        """Create a new model from configuration (if available)"""
-        # This is a placeholder for creating a model from scratch
-        # You would implement this based on your specific model architecture
-        st.info("Model reconstruction from config is not yet implemented. Please ensure your .h5 file is compatible.")
-        return None
+    def _create_simple_model(self):
+        """Create a simple CNN model for image quality"""
+        try:
+            if not self.model_config:
+                return None
+                
+            img_size = self.model_config.get('img_size', [224, 224])
+            
+            model = tf.keras.Sequential([
+                tf.keras.layers.Input(shape=(*img_size, 3)),
+                tf.keras.layers.Conv2D(32, 3, activation='relu'),
+                tf.keras.layers.MaxPooling2D(),
+                tf.keras.layers.Conv2D(64, 3, activation='relu'),
+                tf.keras.layers.MaxPooling2D(),
+                tf.keras.layers.Conv2D(128, 3, activation='relu'),
+                tf.keras.layers.GlobalAveragePooling2D(),
+                tf.keras.layers.Dropout(0.5),
+                tf.keras.layers.Dense(1, activation='sigmoid')
+            ])
+            
+            model.compile(
+                optimizer='adam',
+                loss='binary_crossentropy',
+                metrics=['accuracy']
+            )
+            
+            return model
+            
+        except Exception as e:
+            st.warning(f"Failed to create simple model: {e}")
+            return None
+
+    def _try_manual_fix(self, model_path):
+        """Try to manually fix the architecture issue"""
+        try:
+            import h5py
+            
+            # Try to inspect the model file structure
+            with h5py.File(model_path, 'r') as f:
+                # Get model config from the h5 file
+                if 'model_config' in f.attrs:
+                    model_config_str = f.attrs['model_config']
+                    if isinstance(model_config_str, bytes):
+                        model_config_str = model_config_str.decode('utf-8')
+                    
+                    model_config_dict = json.loads(model_config_str)
+                    
+                    # Try to fix the architecture by removing problematic connections
+                    fixed_config = self._fix_model_config(model_config_dict)
+                    
+                    # Create model from fixed config
+                    model = tf.keras.models.model_from_json(json.dumps(fixed_config))
+                    
+                    # Load weights (this might still fail, but worth trying)
+                    model.load_weights(str(model_path))
+                    
+                    return True, model, None
+                    
+        except Exception as e:
+            st.warning(f"Manual fix attempt failed: {e}")
+            
+        return False, None, "Manual fix failed"
+
+    def _try_weights_only_loading(self, model_dir, architecture_choice):
+        """Try to load only weights into a new architecture"""
+        try:
+            model_path = Path(model_dir) / 'image_quality_model.h5'
+            img_size = self.model_config.get('img_size', [224, 224])
+            
+            # Create model based on architecture choice
+            if architecture_choice == "MobileNetV2":
+                base_model = tf.keras.applications.MobileNetV2(
+                    input_shape=(*img_size, 3),
+                    weights='imagenet',
+                    include_top=False
+                )
+                base_model.trainable = False
+                inputs = tf.keras.Input(shape=(*img_size, 3))
+                x = base_model(inputs, training=False)
+                x = tf.keras.layers.GlobalAveragePooling2D()(x)
+                x = tf.keras.layers.Dropout(0.2)(x)
+                outputs = tf.keras.layers.Dense(1, activation='sigmoid')(x)
+                model = tf.keras.Model(inputs, outputs)
+                
+            elif architecture_choice == "EfficientNetB0":
+                base_model = tf.keras.applications.EfficientNetB0(
+                    input_shape=(*img_size, 3),
+                    weights='imagenet',
+                    include_top=False
+                )
+                base_model.trainable = False
+                inputs = tf.keras.Input(shape=(*img_size, 3))
+                x = base_model(inputs, training=False)
+                x = tf.keras.layers.GlobalAveragePooling2D()(x)
+                x = tf.keras.layers.Dropout(0.2)(x)
+                outputs = tf.keras.layers.Dense(1, activation='sigmoid')(x)
+                model = tf.keras.Model(inputs, outputs)
+                
+            elif architecture_choice == "ResNet50":
+                base_model = tf.keras.applications.ResNet50(
+                    input_shape=(*img_size, 3),
+                    weights='imagenet',
+                    include_top=False
+                )
+                base_model.trainable = False
+                inputs = tf.keras.Input(shape=(*img_size, 3))
+                x = base_model(inputs, training=False)
+                x = tf.keras.layers.GlobalAveragePooling2D()(x)
+                x = tf.keras.layers.Dropout(0.2)(x)
+                outputs = tf.keras.layers.Dense(1, activation='sigmoid')(x)
+                model = tf.keras.Model(inputs, outputs)
+                
+            else:  # Simple CNN
+                model = self._create_simple_model()
+            
+            # Try to load weights
+            model.load_weights(str(model_path))
+            model.compile(
+                optimizer='adam',
+                loss='binary_crossentropy',
+                metrics=['accuracy']
+            )
+            
+            self.model = model
+            return True
+            
+        except Exception as e:
+            st.error(f"Weight loading failed: {e}")
+            return False
+
+    def _fix_model_config(self, config):
+        """Attempt to fix problematic model configurations"""
+        # This is a basic fix - you might need to customize based on your specific model
+        if 'config' in config and 'layers' in config['config']:
+            layers = config['config']['layers']
+            
+            # Look for problematic dense layer connections
+            for layer in layers:
+                if layer.get('class_name') == 'Dense':
+                    # Ensure dense layer only has one input
+                    if 'config' in layer and 'batch_input_shape' in layer['config']:
+                        # Fix input shape issues
+                        pass
+                    
+                    # Fix inbound nodes if they have multiple inputs
+                    if 'inbound_nodes' in layer:
+                        for node in layer['inbound_nodes']:
+                            if len(node) > 1 and len(node[0]) > 1:
+                                # Keep only the first input
+                                node[0] = [node[0][0]]
+        
+        return config
 
     def get_model_info(self):
         """Get model information as formatted text"""
@@ -259,10 +469,48 @@ def main():
             except Exception as e:
                 st.write(f"Error reading directory: {e}")
 
-        # Model info
-        if app.model_config:
-            with st.expander("📊 Model Information", expanded=False):
-                st.markdown(app.get_model_info())
+        # Alternative loading method for problematic models
+        st.markdown("### 🛠️ Alternative Loading Method")
+        if st.button("🔧 Try Alternative Model Creation", use_container_width=True):
+            with st.spinner("Creating alternative model..."):
+                try:
+                    # Create a new model with common architecture
+                    if app.model_config:
+                        img_size = app.model_config.get('img_size', [224, 224])
+                        
+                        # Create a working model
+                        base_model = tf.keras.applications.MobileNetV2(
+                            input_shape=(*img_size, 3),
+                            weights='imagenet',
+                            include_top=False
+                        )
+                        base_model.trainable = False
+                        
+                        inputs = tf.keras.Input(shape=(*img_size, 3))
+                        x = base_model(inputs, training=False)
+                        x = tf.keras.layers.GlobalAveragePooling2D()(x)
+                        x = tf.keras.layers.Dropout(0.2)(x)
+                        outputs = tf.keras.layers.Dense(1, activation='sigmoid')(x)
+                        
+                        new_model = tf.keras.Model(inputs, outputs)
+                        new_model.compile(
+                            optimizer='adam',
+                            loss='binary_crossentropy',
+                            metrics=['accuracy']
+                        )
+                        
+                        # Set the model (without trained weights)
+                        app.model = new_model
+                        st.session_state.model_loaded = True
+                        
+                        st.success("✅ Alternative model created! Note: This uses pre-trained ImageNet weights, not your trained weights.")
+                        st.info("This model will give predictions but may not match your trained model's performance.")
+                        
+                    else:
+                        st.error("Model config not available for alternative creation")
+                        
+                except Exception as e:
+                    st.error(f"Alternative model creation failed: {e}")
 
     # Main content area
     col1, col2 = st.columns([1, 1])

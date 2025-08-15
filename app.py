@@ -21,11 +21,10 @@ class ImageQualityStreamlitApp:
     def find_model_files(self):
         """Automatically find model files in the repository"""
         search_paths = [
-            ".",  # Current directory
+            "./IQA",  # Prioritize IQA directory
+            ".",      # Current directory as fallback
             "./models",
-            "./IQA", 
             "../models",
-            "../IQA",
             "./src",
             "./app"
         ]
@@ -363,11 +362,11 @@ def main():
                 
                 st.markdown("**Model files (.h5):**")
                 for f in model_files:
-                    st.write(f"📄 {os.path.relpath(f)}")
+                    st.write(f"📄 {os.path.relpath(f, 'IQA')}")
                 
                 st.markdown("**Config files (.json):**")
                 for f in config_files:
-                    st.write(f"📄 {os.path.relpath(f)}")
+                    st.write(f"📄 {os.path.relpath(f, 'IQA')}")
                     
                 if not model_files and not config_files:
                     st.write("❌ No model files found")
@@ -512,13 +511,13 @@ def main():
             # Show usage instructions
             st.markdown("### 🚀 How it works:")
             st.markdown("""
-            1. **Auto-Loading**: Models are automatically detected and loaded from the repository
+            1. **Auto-Loading**: Models are automatically detected and loaded from the IQA directory
             2. **Upload Image**: Choose any image file (JPG, PNG, etc.)
             3. **Get Results**: Click 'Predict Quality' for instant analysis
             4. **View Details**: Expand 'Advanced Results' for technical details
             
             **✨ Features:**
-            - Automatic model detection and loading
+            - Automatic model detection and loading from IQA
             - Multiple file format support
             - Detailed confidence scoring
             - Advanced result analysis
@@ -531,34 +530,25 @@ def main():
             st.markdown("""
             ### Expected Repository Structure:
             
-            The app automatically searches for these files:
+            The app automatically searches for these files in the IQA directory:
             
             ```
             your_repository/
-            ├── app.py (this file)
-            ├── image_quality_model.h5 ⭐
-            ├── model_config.json ⭐
-            └── other files...
-            ```
-            
-            **OR in subdirectories:**
-            ```
-            your_repository/
-            ├── app.py
-            ├── models/
+            ├── IQA/
             │   ├── image_quality_model.h5 ⭐
-            │   └── model_config.json ⭐
+            │   ├── model_config.json ⭐
+            ├── app.py
             └── other files...
             ```
             
             ### Auto-Loading Process:
-            1. 🔍 Scans common directories (., ./models, ./IQA, etc.)
+            1. 🔍 Scans the IQA directory first
             2. 📄 Finds .h5 model files and .json config files
             3. 🔗 Matches related files by name similarity
             4. 🤖 Loads models automatically with error handling
             
             ### If Auto-Loading Fails:
-            - ✅ Ensure both files are in the repository
+            - ✅ Ensure both files are in the IQA directory
             - ✅ Check file names contain keywords: 'model', 'quality', 'config'
             - ✅ Verify file permissions are readable
             - 🔄 Try the 'Reload Models' button in the sidebar

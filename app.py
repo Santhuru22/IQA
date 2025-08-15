@@ -139,7 +139,7 @@ def main():
 
     # Auto-load model if not already loaded
     if not st.session_state.model_loaded:
-        model_dir = "./IQA"  # Default model directory
+        model_dir = "./"  # Model files are in the root directory
         with st.spinner("Loading model..."):
             success, message = app.load_model_from_path(model_dir)
             if success:
@@ -162,7 +162,7 @@ def main():
         # Model status display
         if st.session_state.model_loaded:
             st.success("✅ Model Ready")
-            st.info(f"📁 Loaded from: ./IQA")
+            st.info(f"📁 Loaded from: ./")
         else:
             st.error("❌ Model Load Failed")
             st.error(st.session_state.model_load_message)

@@ -14,7 +14,7 @@ class ImageQualityStreamlitApp:
         """Initialize the Streamlit Image Quality Classifier"""
         self.model = None
         self.model_config = None
-        
+
     def load_model_from_path(self, model_dir):
         """Load the trained model and configuration from specified path"""
         try:
@@ -30,7 +30,6 @@ class ImageQualityStreamlitApp:
             if not config_path.exists():
                 return False, "Model configuration file 'model_config.json' not found!"
 
-            # Load model with caching for better performance
             @st.cache_resource
             def load_tf_model(model_path):
                 return tf.keras.models.load_model(str(model_path))
@@ -105,10 +104,10 @@ class ImageQualityStreamlitApp:
 
         try:
             processed_image = self.preprocess_image(image)
-            prediction = self.model.predict(processed_image, verbose=0)[0][0]
+            prediction = self.model.predict(processed_image, verbose=0)[0]
 
             class_names = self.model_config.get('class_names', ['bad', 'good'])
-            predicted_class = class_names[1] if prediction > 0.5 else class_names[0]
+            predicted_class = class_names[1] if prediction > 0.5 else class_names
             confidence = prediction if prediction > 0.5 else 1 - prediction
 
             return True, {
@@ -122,7 +121,9 @@ class ImageQualityStreamlitApp:
             return False, f"Prediction failed: {str(e)}"
 
 def main():
-    # Configure Streamlit page
+    # Use the current directory for model files (as shown in your screenshot)
+    MODEL_DIR = "./IQA"  
+
     st.set_page_config(
         page_title="Image Quality Classifier",
         page_icon="🖼️",
@@ -130,46 +131,26 @@ def main():
         initial_sidebar_state="expanded"
     )
 
-    # Initialize the app
+    # Initialize the app and AUTO-LOAD model
     if 'app' not in st.session_state:
         st.session_state.app = ImageQualityStreamlitApp()
+        # Try to load model as soon as app starts
+        success, message = st.session_state.app.load_model_from_path(MODEL_DIR)
+        st.session_state.model_loaded = success
+        st.session_state.model_load_message = message
 
     app = st.session_state.app
 
-    # Main title
     st.title("🖼️ Image Quality Classifier")
     st.markdown("---")
 
-    # Sidebar for model configuration
+    # Sidebar for model configuration (shows load status/information only)
     with st.sidebar:
         st.header("📁 Model Configuration")
-        
-        # Model path input
-        model_dir = st.text_input(
-            "Model Directory Path",
-            value="./IQA",
-            help="Path to directory containing image_quality_model.h5 and model_config.json"
-        )
-        
-        # Load model button
-        if st.button("🔄 Load Model", type="primary", use_container_width=True):
-            with st.spinner("Loading model..."):
-                success, message = app.load_model_from_path(model_dir)
-                
-                if success:
-                    st.success(message)
-                    st.session_state.model_loaded = True
-                else:
-                    st.error(message)
-                    st.session_state.model_loaded = False
-
-        # Model status
-        if hasattr(st.session_state, 'model_loaded') and st.session_state.model_loaded:
+        if st.session_state.model_loaded:
             st.success("✅ Model loaded successfully!")
         else:
-            st.warning("❌ No model loaded")
-
-        # Model info
+            st.error(st.session_state.model_load_message)
         if app.model_config:
             with st.expander("📊 Model Information", expanded=False):
                 st.markdown(app.get_model_info())
@@ -179,82 +160,49 @@ def main():
 
     with col1:
         st.subheader("📤 Image Upload")
-        
-        # File uploader
         uploaded_file = st.file_uploader(
             "Choose an image file",
             type=['jpg', 'jpeg', 'png', 'bmp', 'tiff'],
             help="Upload an image to classify its quality"
         )
-
-        # Display uploaded image
         if uploaded_file is not None:
             image = Image.open(uploaded_file)
-            
-            # Convert to RGB if necessary
             if image.mode != 'RGB':
                 image = image.convert('RGB')
-            
             st.image(image, caption=f"Uploaded: {uploaded_file.name}", use_column_width=True)
 
     with col2:
         st.subheader("📊 Prediction Results")
-        
         if uploaded_file is not None and app.model is not None:
-            # Predict button
             if st.button("🔮 Predict Quality", type="primary", use_container_width=True):
                 with st.spinner("Analyzing image..."):
                     success, result = app.predict_image_quality(image)
-                    
                     if success:
-                        # Display prediction results
                         predicted_class = result['predicted_class']
                         confidence = result['confidence']
                         raw_score = result['raw_score']
-                        
-                        # Create metrics display
                         st.markdown("### Results")
-                        
-                        # Quality indicator
                         if predicted_class.lower() == 'good':
                             st.success(f"✅ **Quality: {predicted_class.upper()}**")
                         else:
                             st.error(f"❌ **Quality: {predicted_class.upper()}**")
-                        
-                        # Metrics
                         metric_col1, metric_col2 = st.columns(2)
                         with metric_col1:
                             st.metric("Confidence", f"{confidence*100:.1f}%")
                         with metric_col2:
                             st.metric("Raw Score", f"{raw_score:.4f}")
-                        
-                        # Progress bar for confidence
                         st.markdown("**Confidence Level:**")
                         st.progress(confidence)
-                        
-                        # Interpretation
                         st.markdown("### Interpretation")
                         if predicted_class.lower() == 'good':
-                            st.markdown(f"""
-                            🟢 The image appears to be of **GOOD** quality.
-                            
-                            The model is **{confidence*100:.1f}%** confident in this prediction.
-                            """)
+                            st.markdown(f"""🟢 The image appears to be of **GOOD** quality.\nThe model is **{confidence*100:.1f}%** confident in this prediction.""")
                         else:
-                            st.markdown(f"""
-                            🔴 The image appears to be of **BAD** quality.
-                            
-                            The model is **{confidence*100:.1f}%** confident in this prediction.
-                            """)
-                        
+                            st.markdown(f"""🔴 The image appears to be of **BAD** quality.\nThe model is **{confidence*100:.1f}%** confident in this prediction.""")
                         st.info("📝 Note: Scores closer to 1.0 indicate good quality, while scores closer to 0.0 indicate bad quality.")
-                        
                     else:
                         st.error(result)
-        
         elif uploaded_file is not None and app.model is None:
-            st.warning("⚠️ Please load a model first to make predictions.")
-        
+            st.warning("⚠️ Model failed to load. See sidebar for details.")
         elif uploaded_file is None:
             st.info("📝 Upload an image to see prediction results here.")
 

@@ -101,7 +101,7 @@ class ImageQualityStreamlitApp:
     def predict_image_quality(self, image):
         """Predict image quality"""
         if not self.model:
-            return False, "Please load a model first!"
+            return False, "Model not loaded!"
 
         try:
             processed_image = self.preprocess_image(image)
@@ -130,49 +130,55 @@ def main():
         initial_sidebar_state="expanded"
     )
 
-    # Initialize the app
+    # Initialize the app and auto-load model
     if 'app' not in st.session_state:
         st.session_state.app = ImageQualityStreamlitApp()
+        st.session_state.model_loaded = False
 
     app = st.session_state.app
+
+    # Auto-load model if not already loaded
+    if not st.session_state.model_loaded:
+        model_dir = "./IQA"  # Default model directory
+        with st.spinner("Loading model..."):
+            success, message = app.load_model_from_path(model_dir)
+            if success:
+                st.session_state.model_loaded = True
+                st.session_state.model_load_message = message
+                st.session_state.model_load_success = True
+            else:
+                st.session_state.model_loaded = False
+                st.session_state.model_load_message = message
+                st.session_state.model_load_success = False
 
     # Main title
     st.title("🖼️ Image Quality Classifier")
     st.markdown("---")
 
-    # Sidebar for model configuration
+    # Sidebar for model information
     with st.sidebar:
-        st.header("📁 Model Configuration")
+        st.header("📊 Model Status")
         
-        # Model path input
-        model_dir = st.text_input(
-            "Model Directory Path",
-            value="./IQA",
-            help="Path to directory containing image_quality_model.h5 and model_config.json"
-        )
-        
-        # Load model button
-        if st.button("🔄 Load Model", type="primary", use_container_width=True):
-            with st.spinner("Loading model..."):
-                success, message = app.load_model_from_path(model_dir)
-                
-                if success:
-                    st.success(message)
-                    st.session_state.model_loaded = True
-                else:
-                    st.error(message)
-                    st.session_state.model_loaded = False
-
-        # Model status
-        if hasattr(st.session_state, 'model_loaded') and st.session_state.model_loaded:
-            st.success("✅ Model loaded successfully!")
+        # Model status display
+        if st.session_state.model_loaded:
+            st.success("✅ Model Ready")
+            st.info(f"📁 Loaded from: ./IQA")
         else:
-            st.warning("❌ No model loaded")
+            st.error("❌ Model Load Failed")
+            st.error(st.session_state.model_load_message)
 
         # Model info
         if app.model_config:
             with st.expander("📊 Model Information", expanded=False):
                 st.markdown(app.get_model_info())
+
+    # Show initial load status message
+    if hasattr(st.session_state, 'model_load_message'):
+        if st.session_state.model_load_success:
+            st.success(st.session_state.model_load_message)
+        else:
+            st.error(st.session_state.model_load_message)
+            st.stop()  # Stop execution if model failed to load
 
     # Main content area
     col1, col2 = st.columns([1, 1])
@@ -200,7 +206,7 @@ def main():
     with col2:
         st.subheader("📊 Prediction Results")
         
-        if uploaded_file is not None and app.model is not None:
+        if uploaded_file is not None:
             # Predict button
             if st.button("🔮 Predict Quality", type="primary", use_container_width=True):
                 with st.spinner("Analyzing image..."):
@@ -251,9 +257,6 @@ def main():
                         
                     else:
                         st.error(result)
-        
-        elif uploaded_file is not None and app.model is None:
-            st.warning("⚠️ Please load a model first to make predictions.")
         
         elif uploaded_file is None:
             st.info("📝 Upload an image to see prediction results here.")

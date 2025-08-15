@@ -7,6 +7,8 @@ from pathlib import Path
 import os
 import streamlit as st
 import matplotlib.pyplot as plt
+from io import BytesIO
+import tempfile
 
 class ImageQualityStreamlitApp:
     def __init__(self):
@@ -19,12 +21,17 @@ class ImageQualityStreamlitApp:
         try:
             # Load model from uploaded .h5 file
             model_buffer = BytesIO(model_file.getvalue())
-            self.model = tf.keras.models.load_model(model_buffer)
+            # Save to a temporary file since TensorFlow prefers file paths
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".h5") as tmp_file:
+                tmp_file.write(model_buffer.getvalue())
+                tmp_file_path = tmp_file.name
+            self.model = tf.keras.models.load_model(tmp_file_path)
+            os.unlink(tmp_file_path)  # Clean up temporary file
 
             # Load configuration from uploaded .json file
             config_buffer = BytesIO(config_file.getvalue())
-            with config_buffer as f:
-                self.model_config = json.load(f)
+            config_buffer.seek(0)  # Ensure we start from the beginning
+            self.model_config = json.load(config_buffer)
 
             return True, "Model loaded successfully from uploaded files"
 

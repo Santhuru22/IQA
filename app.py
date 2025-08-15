@@ -1,4 +1,3 @@
-```python
 import json
 import numpy as np
 import cv2
@@ -9,6 +8,7 @@ import os
 import streamlit as st
 import matplotlib.pyplot as plt
 from io import BytesIO
+import tempfile
 
 class ImageQualityStreamlitApp:
     def __init__(self):
@@ -251,7 +251,7 @@ def main():
     st.markdown("---")
     st.markdown(
         """
-        <div style='text-align: center; color: #666; padding: 20px;>
+        <div style='text-align: center; color: #666; padding: 20px;'>
             <p>🖼️ Image Quality Classifier | Built with Streamlit & TensorFlow</p>
         </div>
         """,
@@ -260,4 +260,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-```

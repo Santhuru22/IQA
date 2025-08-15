@@ -33,9 +33,27 @@ class ImageQualityStreamlitApp:
             # Load model with caching for better performance
             @st.cache_resource
             def load_tf_model(model_path):
-                return tf.keras.models.load_model(str(model_path))
+                try:
+                    # Try loading with compile=False first
+                    return tf.keras.models.load_model(str(model_path), compile=False)
+                except Exception as e1:
+                    try:
+                        # Try with custom objects if needed
+                        return tf.keras.models.load_model(str(model_path), 
+                                                        compile=False, 
+                                                        safe_mode=False)
+                    except Exception as e2:
+                        # If both fail, raise the original error
+                        raise e1
 
             self.model = load_tf_model(model_path)
+            
+            # Compile the model after loading
+            self.model.compile(
+                optimizer='adam',
+                loss='binary_crossentropy',
+                metrics=['accuracy']
+            )
 
             # Load configuration
             with open(config_path, 'r') as f:

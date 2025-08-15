@@ -30,23 +30,31 @@ class ImageQualityStreamlitApp:
             if not config_path.exists():
                 return False, "Model configuration file 'model_config.json' not found!"
 
+            # Check file size and integrity
+            file_size = model_path.stat().st_size
+            if file_size == 0:
+                return False, "Model file 'image_quality_model.h5' is empty!"
+            
+            if file_size < 1000:  # Very small file, likely corrupted
+                return False, f"Model file seems too small ({file_size} bytes). It may be corrupted."
+
             # Load model with caching for better performance
             @st.cache_resource
-            def load_tf_model(model_path):
+            def load_tf_model(model_path_str):
                 try:
                     # Try loading with compile=False first
-                    return tf.keras.models.load_model(str(model_path), compile=False)
+                    return tf.keras.models.load_model(model_path_str, compile=False)
                 except Exception as e1:
                     try:
                         # Try with custom objects if needed
-                        return tf.keras.models.load_model(str(model_path), 
+                        return tf.keras.models.load_model(model_path_str, 
                                                         compile=False, 
                                                         safe_mode=False)
                     except Exception as e2:
                         # If both fail, raise the original error
                         raise e1
 
-            self.model = load_tf_model(model_path)
+            self.model = load_tf_model(str(model_path))
             
             # Compile the model after loading
             self.model.compile(
@@ -59,7 +67,7 @@ class ImageQualityStreamlitApp:
             with open(config_path, 'r') as f:
                 self.model_config = json.load(f)
 
-            return True, f"Model loaded successfully from: {model_dir}"
+            return True, f"Model loaded successfully from: {model_dir} (File size: {file_size/1024/1024:.2f} MB)"
 
         except Exception as e:
             return False, f"Failed to load model: {str(e)}"

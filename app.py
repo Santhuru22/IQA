@@ -8,60 +8,118 @@ import os
 import streamlit as st
 import matplotlib.pyplot as plt
 from io import BytesIO
+import glob
 
 class ImageQualityStreamlitApp:
     def __init__(self):
         """Initialize the Streamlit Image Quality Classifier"""
         self.model = None
         self.model_config = None
+        self.model_path = None
+        self.config_path = None
         
-    def load_model_from_path(self, model_dir):
-        """Load the trained model and configuration from specified path with improved error handling"""
+    def find_model_files(self):
+        """Automatically find model files in the repository"""
+        search_paths = [
+            ".",  # Current directory
+            "./models",
+            "./IQA", 
+            "../models",
+            "../IQA",
+            "./src",
+            "./app"
+        ]
+        
+        model_candidates = []
+        config_candidates = []
+        
+        # Search in common directories
+        for search_path in search_paths:
+            if os.path.exists(search_path):
+                # Look for .h5 files
+                h5_files = glob.glob(os.path.join(search_path, "*.h5"))
+                h5_files.extend(glob.glob(os.path.join(search_path, "**/*.h5"), recursive=True))
+                
+                # Look for config files
+                json_files = glob.glob(os.path.join(search_path, "*config*.json"))
+                json_files.extend(glob.glob(os.path.join(search_path, "**/*config*.json"), recursive=True))
+                
+                model_candidates.extend(h5_files)
+                config_candidates.extend(json_files)
+        
+        # Filter for likely model files
+        model_files = [f for f in model_candidates if any(keyword in os.path.basename(f).lower() 
+                      for keyword in ['model', 'quality', 'image'])]
+        
+        config_files = [f for f in config_candidates if any(keyword in os.path.basename(f).lower() 
+                       for keyword in ['model', 'config'])]
+        
+        return model_files, config_files
+    
+    def auto_load_models(self):
+        """Automatically find and load models from the repository"""
         try:
-            if not os.path.exists(model_dir):
-                return False, f"Model directory not found: {model_dir}"
-
-            model_path = Path(model_dir) / 'image_quality_model.h5'
-            config_path = Path(model_dir) / 'model_config.json'
-
-            if not model_path.exists():
-                return False, "Model file 'image_quality_model.h5' not found in the specified directory!"
-
-            if not config_path.exists():
-                return False, "Model configuration file 'model_config.json' not found!"
-
-            # Load configuration first
-            with open(config_path, 'r') as f:
+            st.info("🔍 Scanning repository for model files...")
+            
+            model_files, config_files = self.find_model_files()
+            
+            if not model_files:
+                return False, "No model (.h5) files found in repository"
+            
+            if not config_files:
+                return False, "No configuration (.json) files found in repository"
+            
+            # Display found files
+            st.success(f"📁 Found {len(model_files)} model file(s) and {len(config_files)} config file(s)")
+            
+            # Try to match model and config files
+            best_model = None
+            best_config = None
+            
+            # Look for exact matches first
+            for model_file in model_files:
+                model_name = Path(model_file).stem
+                for config_file in config_files:
+                    config_name = Path(config_file).stem
+                    if model_name.lower() in config_name.lower() or config_name.lower() in model_name.lower():
+                        best_model = model_file
+                        best_config = config_file
+                        break
+                if best_model:
+                    break
+            
+            # If no exact match, use the first available files
+            if not best_model:
+                best_model = model_files[0]
+                best_config = config_files[0]
+            
+            st.info(f"📄 Using model: {os.path.basename(best_model)}")
+            st.info(f"📄 Using config: {os.path.basename(best_config)}")
+            
+            # Load the configuration first
+            with open(best_config, 'r') as f:
                 self.model_config = json.load(f)
-
-            # Try different model loading approaches
-            success, model, error_msg = self._try_load_model(model_path)
+            
+            # Load the model with error handling
+            success, model, error_msg = self._safe_load_model(best_model)
             
             if success:
                 self.model = model
-                return True, f"Model loaded successfully from: {model_dir}"
+                self.model_path = best_model
+                self.config_path = best_config
+                return True, f"Models loaded successfully!\nModel: {os.path.basename(best_model)}\nConfig: {os.path.basename(best_config)}"
             else:
                 return False, f"Failed to load model: {error_msg}"
-
+                
         except Exception as e:
-            return False, f"Failed to load model: {str(e)}"
-
-    def _try_load_model(self, model_path):
-        """Try different approaches to load the model"""
+            return False, f"Auto-loading failed: {str(e)}"
+    
+    def _safe_load_model(self, model_path):
+        """Safely load model with multiple approaches"""
         
-        # Approach 1: Load weights only and reconstruct architecture
+        # Approach 1: Load with compile=False (safest)
         try:
-            st.info("🔄 Trying to reconstruct model from weights...")
-            model = self._reconstruct_model_architecture()
-            if model is not None:
-                model.load_weights(str(model_path))
-                return True, model, None
-        except Exception as e0:
-            st.warning(f"Architecture reconstruction failed: {str(e0)}")
-        
-        # Approach 2: Standard loading with compile=False
-        try:
-            st.info("🔄 Trying standard model loading...")
+            st.info("🔄 Trying safe model loading...")
             model = tf.keras.models.load_model(str(model_path), compile=False)
             # Recompile the model
             model.compile(
@@ -71,51 +129,42 @@ class ImageQualityStreamlitApp:
             )
             return True, model, None
         except Exception as e1:
-            st.warning(f"Standard loading failed: {str(e1)}")
+            st.warning(f"Safe loading failed: {str(e1)}")
         
-        # Approach 3: Load with safe_mode (TF 2.11+)
+        # Approach 2: Try with custom objects
         try:
-            st.info("🔄 Trying safe mode loading...")
-            if hasattr(tf.keras.models, 'load_model'):
-                # Try with safe_mode if available
-                model = tf.keras.models.load_model(str(model_path), compile=False, safe_mode=False)
-                model.compile(
-                    optimizer='adam',
-                    loss='binary_crossentropy',
-                    metrics=['accuracy']
-                )
-                return True, model, None
+            st.info("🔄 Trying custom objects loading...")
+            model = tf.keras.models.load_model(str(model_path), custom_objects={}, compile=False)
+            model.compile(
+                optimizer='adam',
+                loss='binary_crossentropy',
+                metrics=['accuracy']
+            )
+            return True, model, None
         except Exception as e2:
-            st.warning(f"Safe mode loading failed: {str(e2)}")
+            st.warning(f"Custom objects loading failed: {str(e2)}")
         
-        # Approach 4: Try to load just the weights and create a simple model
+        # Approach 3: Create compatible model and load weights
         try:
-            st.info("🔄 Trying simple model reconstruction...")
-            model = self._create_simple_model()
-            if model is not None:
-                # Try to load weights - this might fail if architectures don't match
-                model.load_weights(str(model_path))
-                return True, model, None
+            st.info("🔄 Trying weight-only loading with compatible architecture...")
+            compatible_model = self._create_compatible_model()
+            if compatible_model:
+                compatible_model.load_weights(str(model_path))
+                return True, compatible_model, None
         except Exception as e3:
-            st.warning(f"Simple model reconstruction failed: {str(e3)}")
+            st.warning(f"Weight loading failed: {str(e3)}")
         
-        # Approach 5: Manual architecture fix
-        try:
-            st.info("🔄 Trying manual architecture fix...")
-            return self._try_manual_fix(model_path)
-        except Exception as e4:
-            return False, None, f"All loading approaches failed. Last error: {str(e4)}"
-
-    def _reconstruct_model_architecture(self):
-        """Reconstruct a common image quality model architecture"""
+        return False, None, f"All loading methods failed. Last error: {str(e3) if 'e3' in locals() else str(e2)}"
+    
+    def _create_compatible_model(self):
+        """Create a compatible model architecture"""
         try:
             if not self.model_config:
                 return None
                 
             img_size = self.model_config.get('img_size', [224, 224])
             
-            # Common architecture for image quality assessment
-            # Base model (typically a pre-trained CNN)
+            # Try MobileNetV2 architecture (common for image quality)
             base_model = tf.keras.applications.MobileNetV2(
                 input_shape=(*img_size, 3),
                 weights='imagenet',
@@ -123,15 +172,13 @@ class ImageQualityStreamlitApp:
                 pooling='avg'
             )
             
-            # Freeze base model
             base_model.trainable = False
             
-            # Add custom classification head
+            # Add custom head
             inputs = tf.keras.Input(shape=(*img_size, 3))
             x = base_model(inputs, training=False)
-            x = tf.keras.layers.GlobalAveragePooling2D()(x)
             x = tf.keras.layers.Dropout(0.2)(x)
-            outputs = tf.keras.layers.Dense(1, activation='sigmoid', name='quality_prediction')(x)
+            outputs = tf.keras.layers.Dense(1, activation='sigmoid')(x)
             
             model = tf.keras.Model(inputs, outputs)
             model.compile(
@@ -143,161 +190,8 @@ class ImageQualityStreamlitApp:
             return model
             
         except Exception as e:
-            st.warning(f"Failed to reconstruct MobileNetV2 architecture: {e}")
+            st.warning(f"Compatible model creation failed: {e}")
             return None
-
-    def _create_simple_model(self):
-        """Create a simple CNN model for image quality"""
-        try:
-            if not self.model_config:
-                return None
-                
-            img_size = self.model_config.get('img_size', [224, 224])
-            
-            model = tf.keras.Sequential([
-                tf.keras.layers.Input(shape=(*img_size, 3)),
-                tf.keras.layers.Conv2D(32, 3, activation='relu'),
-                tf.keras.layers.MaxPooling2D(),
-                tf.keras.layers.Conv2D(64, 3, activation='relu'),
-                tf.keras.layers.MaxPooling2D(),
-                tf.keras.layers.Conv2D(128, 3, activation='relu'),
-                tf.keras.layers.GlobalAveragePooling2D(),
-                tf.keras.layers.Dropout(0.5),
-                tf.keras.layers.Dense(1, activation='sigmoid')
-            ])
-            
-            model.compile(
-                optimizer='adam',
-                loss='binary_crossentropy',
-                metrics=['accuracy']
-            )
-            
-            return model
-            
-        except Exception as e:
-            st.warning(f"Failed to create simple model: {e}")
-            return None
-
-    def _try_manual_fix(self, model_path):
-        """Try to manually fix the architecture issue"""
-        try:
-            import h5py
-            
-            # Try to inspect the model file structure
-            with h5py.File(model_path, 'r') as f:
-                # Get model config from the h5 file
-                if 'model_config' in f.attrs:
-                    model_config_str = f.attrs['model_config']
-                    if isinstance(model_config_str, bytes):
-                        model_config_str = model_config_str.decode('utf-8')
-                    
-                    model_config_dict = json.loads(model_config_str)
-                    
-                    # Try to fix the architecture by removing problematic connections
-                    fixed_config = self._fix_model_config(model_config_dict)
-                    
-                    # Create model from fixed config
-                    model = tf.keras.models.model_from_json(json.dumps(fixed_config))
-                    
-                    # Load weights (this might still fail, but worth trying)
-                    model.load_weights(str(model_path))
-                    
-                    return True, model, None
-                    
-        except Exception as e:
-            st.warning(f"Manual fix attempt failed: {e}")
-            
-        return False, None, "Manual fix failed"
-
-    def _try_weights_only_loading(self, model_dir, architecture_choice):
-        """Try to load only weights into a new architecture"""
-        try:
-            model_path = Path(model_dir) / 'image_quality_model.h5'
-            img_size = self.model_config.get('img_size', [224, 224])
-            
-            # Create model based on architecture choice
-            if architecture_choice == "MobileNetV2":
-                base_model = tf.keras.applications.MobileNetV2(
-                    input_shape=(*img_size, 3),
-                    weights='imagenet',
-                    include_top=False
-                )
-                base_model.trainable = False
-                inputs = tf.keras.Input(shape=(*img_size, 3))
-                x = base_model(inputs, training=False)
-                x = tf.keras.layers.GlobalAveragePooling2D()(x)
-                x = tf.keras.layers.Dropout(0.2)(x)
-                outputs = tf.keras.layers.Dense(1, activation='sigmoid')(x)
-                model = tf.keras.Model(inputs, outputs)
-                
-            elif architecture_choice == "EfficientNetB0":
-                base_model = tf.keras.applications.EfficientNetB0(
-                    input_shape=(*img_size, 3),
-                    weights='imagenet',
-                    include_top=False
-                )
-                base_model.trainable = False
-                inputs = tf.keras.Input(shape=(*img_size, 3))
-                x = base_model(inputs, training=False)
-                x = tf.keras.layers.GlobalAveragePooling2D()(x)
-                x = tf.keras.layers.Dropout(0.2)(x)
-                outputs = tf.keras.layers.Dense(1, activation='sigmoid')(x)
-                model = tf.keras.Model(inputs, outputs)
-                
-            elif architecture_choice == "ResNet50":
-                base_model = tf.keras.applications.ResNet50(
-                    input_shape=(*img_size, 3),
-                    weights='imagenet',
-                    include_top=False
-                )
-                base_model.trainable = False
-                inputs = tf.keras.Input(shape=(*img_size, 3))
-                x = base_model(inputs, training=False)
-                x = tf.keras.layers.GlobalAveragePooling2D()(x)
-                x = tf.keras.layers.Dropout(0.2)(x)
-                outputs = tf.keras.layers.Dense(1, activation='sigmoid')(x)
-                model = tf.keras.Model(inputs, outputs)
-                
-            else:  # Simple CNN
-                model = self._create_simple_model()
-            
-            # Try to load weights
-            model.load_weights(str(model_path))
-            model.compile(
-                optimizer='adam',
-                loss='binary_crossentropy',
-                metrics=['accuracy']
-            )
-            
-            self.model = model
-            return True
-            
-        except Exception as e:
-            st.error(f"Weight loading failed: {e}")
-            return False
-
-    def _fix_model_config(self, config):
-        """Attempt to fix problematic model configurations"""
-        # This is a basic fix - you might need to customize based on your specific model
-        if 'config' in config and 'layers' in config['config']:
-            layers = config['config']['layers']
-            
-            # Look for problematic dense layer connections
-            for layer in layers:
-                if layer.get('class_name') == 'Dense':
-                    # Ensure dense layer only has one input
-                    if 'config' in layer and 'batch_input_shape' in layer['config']:
-                        # Fix input shape issues
-                        pass
-                    
-                    # Fix inbound nodes if they have multiple inputs
-                    if 'inbound_nodes' in layer:
-                        for node in layer['inbound_nodes']:
-                            if len(node) > 1 and len(node[0]) > 1:
-                                # Keep only the first input
-                                node[0] = [node[0][0]]
-        
-        return config
 
     def get_model_info(self):
         """Get model information as formatted text"""
@@ -305,34 +199,40 @@ class ImageQualityStreamlitApp:
             return "No model configuration available"
 
         info_text = "**MODEL INFORMATION**\n\n"
+        info_text += f"- **Model Path:** {os.path.basename(self.model_path) if self.model_path else 'Unknown'}\n"
+        info_text += f"- **Config Path:** {os.path.basename(self.config_path) if self.config_path else 'Unknown'}\n"
         info_text += f"- **Training Date:** {self.model_config.get('training_date', 'Unknown')}\n"
         info_text += f"- **Image Size:** {self.model_config.get('img_size', [224, 224])}\n"
         info_text += f"- **Classes:** {', '.join(self.model_config.get('class_names', ['bad', 'good']))}\n\n"
 
         metrics = self.model_config.get('metrics', {})
-        info_text += "**MODEL PERFORMANCE**\n\n"
-        info_text += f"- **Accuracy:** {metrics.get('accuracy', 0):.4f}\n"
-        info_text += f"- **Validation Accuracy:** {metrics.get('val_accuracy', 0):.4f}\n"
-        info_text += f"- **Validation Loss:** {metrics.get('val_loss', 0):.4f}\n\n"
+        if metrics:
+            info_text += "**MODEL PERFORMANCE**\n\n"
+            info_text += f"- **Accuracy:** {metrics.get('accuracy', 0):.4f}\n"
+            info_text += f"- **Validation Accuracy:** {metrics.get('val_accuracy', 0):.4f}\n"
+            info_text += f"- **Validation Loss:** {metrics.get('val_loss', 0):.4f}\n\n"
 
-        if 'classification_report' in metrics:
-            report = metrics['classification_report']
-            info_text += "**CLASSIFICATION REPORT**\n\n"
-            for class_name in ['bad', 'good']:
-                if class_name in report:
-                    class_metrics = report[class_name]
-                    info_text += f"**{class_name.upper()}:**\n"
-                    info_text += f"- Precision: {class_metrics.get('precision', 0):.4f}\n"
-                    info_text += f"- Recall: {class_metrics.get('recall', 0):.4f}\n"
-                    info_text += f"- F1-Score: {class_metrics.get('f1-score', 0):.4f}\n\n"
+            if 'classification_report' in metrics:
+                report = metrics['classification_report']
+                info_text += "**CLASSIFICATION REPORT**\n\n"
+                for class_name in ['bad', 'good']:
+                    if class_name in report:
+                        class_metrics = report[class_name]
+                        info_text += f"**{class_name.upper()}:**\n"
+                        info_text += f"- Precision: {class_metrics.get('precision', 0):.4f}\n"
+                        info_text += f"- Recall: {class_metrics.get('recall', 0):.4f}\n"
+                        info_text += f"- F1-Score: {class_metrics.get('f1-score', 0):.4f}\n\n"
 
         # Add model architecture info if available
         if self.model:
             info_text += "**MODEL ARCHITECTURE**\n\n"
-            info_text += f"- **Total Parameters:** {self.model.count_params():,}\n"
-            info_text += f"- **Input Shape:** {self.model.input_shape}\n"
-            info_text += f"- **Output Shape:** {self.model.output_shape}\n"
-            info_text += f"- **Number of Layers:** {len(self.model.layers)}\n\n"
+            try:
+                info_text += f"- **Total Parameters:** {self.model.count_params():,}\n"
+                info_text += f"- **Input Shape:** {self.model.input_shape}\n"
+                info_text += f"- **Output Shape:** {self.model.output_shape}\n"
+                info_text += f"- **Number of Layers:** {len(self.model.layers)}\n\n"
+            except:
+                info_text += "- **Architecture details:** Unable to retrieve\n\n"
 
         return info_text
 
@@ -365,7 +265,7 @@ class ImageQualityStreamlitApp:
     def predict_image_quality(self, image):
         """Predict image quality"""
         if not self.model:
-            return False, "Please load a model first!"
+            return False, "Please wait for model to load automatically!"
 
         try:
             processed_image = self.preprocess_image(image)
@@ -377,7 +277,7 @@ class ImageQualityStreamlitApp:
             if len(prediction.shape) > 1 and prediction.shape[1] > 1:
                 # Multi-class output
                 prediction_value = np.max(prediction[0])
-                predicted_class_idx = np.argmax(prediction[0])
+                predicted_class_idx = 1 if prediction_value > 0.5 else 0
             else:
                 # Binary output
                 prediction_value = prediction[0][0] if len(prediction.shape) > 1 else prediction[0]
@@ -392,7 +292,7 @@ class ImageQualityStreamlitApp:
                 'confidence': float(confidence),
                 'raw_score': float(prediction_value),
                 'class_names': class_names,
-                'prediction_array': prediction.tolist()
+                'prediction_array': prediction.tolist() if hasattr(prediction, 'tolist') else prediction
             }
 
         except Exception as e:
@@ -401,7 +301,7 @@ class ImageQualityStreamlitApp:
 def main():
     # Configure Streamlit page
     st.set_page_config(
-        page_title="Image Quality Classifier",
+        page_title="Image Quality Classifier - Auto Loading",
         page_icon="🖼️",
         layout="wide",
         initial_sidebar_state="expanded"
@@ -410,107 +310,75 @@ def main():
     # Initialize the app
     if 'app' not in st.session_state:
         st.session_state.app = ImageQualityStreamlitApp()
+        st.session_state.auto_loaded = False
 
     app = st.session_state.app
 
     # Main title
     st.title("🖼️ Image Quality Classifier")
+    st.subheader("🤖 Automatic Model Loading")
     st.markdown("---")
 
-    # Sidebar for model configuration
-    with st.sidebar:
-        st.header("📁 Model Configuration")
-        
-        # Model path input with suggestions
-        st.markdown("**Common paths:**")
-        st.markdown("- `./` (current directory)")
-        st.markdown("- `./models` (models subfolder)")
-        st.markdown("- `./IQA` (IQA subfolder)")
-        
-        model_dir = st.text_input(
-            "Model Directory Path",
-            value="./",
-            help="Path to directory containing image_quality_model.h5 and model_config.json"
-        )
-        
-        # Load model button
-        if st.button("🔄 Load Model", type="primary", use_container_width=True):
-            with st.spinner("Loading model..."):
-                success, message = app.load_model_from_path(model_dir)
-                
-                if success:
-                    st.success(message)
-                    st.session_state.model_loaded = True
-                    st.rerun()  # Refresh to show model info
-                else:
-                    st.error(message)
-                    st.session_state.model_loaded = False
+    # Auto-load models on startup
+    if not st.session_state.auto_loaded:
+        with st.spinner("🔍 Auto-loading models from repository..."):
+            success, message = app.auto_load_models()
+            
+            if success:
+                st.success("✅ " + message)
+                st.session_state.model_loaded = True
+                st.session_state.auto_loaded = True
+                st.rerun()
+            else:
+                st.error("❌ " + message)
+                st.session_state.model_loaded = False
+                st.session_state.auto_loaded = True
 
+    # Sidebar for model information and manual controls
+    with st.sidebar:
+        st.header("📊 Model Status")
+        
         # Model status
         if hasattr(st.session_state, 'model_loaded') and st.session_state.model_loaded:
-            st.success("✅ Model loaded successfully!")
+            st.success("✅ Models loaded automatically!")
+            
+            # Show loaded files
+            if app.model_path and app.config_path:
+                st.info(f"📄 **Model:** {os.path.basename(app.model_path)}")
+                st.info(f"📄 **Config:** {os.path.basename(app.config_path)}")
         else:
-            st.warning("❌ No model loaded")
-
-        # Debug information
-        with st.expander("🔧 Debug Information", expanded=False):
-            st.write("**Directory Contents:**")
+            st.error("❌ Auto-loading failed")
+        
+        # Manual reload button
+        st.markdown("### 🔄 Manual Controls")
+        if st.button("🔄 Reload Models", use_container_width=True):
+            st.session_state.auto_loaded = False
+            st.rerun()
+        
+        # File browser for debugging
+        with st.expander("🔍 Repository Files", expanded=False):
+            st.markdown("**Found in repository:**")
             try:
-                if os.path.exists(model_dir):
-                    files = os.listdir(model_dir)
-                    for file in files:
-                        file_path = os.path.join(model_dir, file)
-                        if os.path.isfile(file_path):
-                            st.write(f"📄 {file}")
-                        else:
-                            st.write(f"📁 {file}/")
-                else:
-                    st.write("Directory does not exist")
+                model_files, config_files = app.find_model_files()
+                
+                st.markdown("**Model files (.h5):**")
+                for f in model_files:
+                    st.write(f"📄 {os.path.relpath(f)}")
+                
+                st.markdown("**Config files (.json):**")
+                for f in config_files:
+                    st.write(f"📄 {os.path.relpath(f)}")
+                    
+                if not model_files and not config_files:
+                    st.write("❌ No model files found")
+                    
             except Exception as e:
-                st.write(f"Error reading directory: {e}")
+                st.write(f"❌ Error scanning files: {e}")
 
-        # Alternative loading method for problematic models
-        st.markdown("### 🛠️ Alternative Loading Method")
-        if st.button("🔧 Try Alternative Model Creation", use_container_width=True):
-            with st.spinner("Creating alternative model..."):
-                try:
-                    # Create a new model with common architecture
-                    if app.model_config:
-                        img_size = app.model_config.get('img_size', [224, 224])
-                        
-                        # Create a working model
-                        base_model = tf.keras.applications.MobileNetV2(
-                            input_shape=(*img_size, 3),
-                            weights='imagenet',
-                            include_top=False
-                        )
-                        base_model.trainable = False
-                        
-                        inputs = tf.keras.Input(shape=(*img_size, 3))
-                        x = base_model(inputs, training=False)
-                        x = tf.keras.layers.GlobalAveragePooling2D()(x)
-                        x = tf.keras.layers.Dropout(0.2)(x)
-                        outputs = tf.keras.layers.Dense(1, activation='sigmoid')(x)
-                        
-                        new_model = tf.keras.Model(inputs, outputs)
-                        new_model.compile(
-                            optimizer='adam',
-                            loss='binary_crossentropy',
-                            metrics=['accuracy']
-                        )
-                        
-                        # Set the model (without trained weights)
-                        app.model = new_model
-                        st.session_state.model_loaded = True
-                        
-                        st.success("✅ Alternative model created! Note: This uses pre-trained ImageNet weights, not your trained weights.")
-                        st.info("This model will give predictions but may not match your trained model's performance.")
-                        
-                    else:
-                        st.error("Model config not available for alternative creation")
-                        
-                except Exception as e:
-                    st.error(f"Alternative model creation failed: {e}")
+        # Model information
+        if app.model_config:
+            with st.expander("📊 Model Information", expanded=False):
+                st.markdown(app.get_model_info())
 
     # Main content area
     col1, col2 = st.columns([1, 1])
@@ -518,11 +386,16 @@ def main():
     with col1:
         st.subheader("📤 Image Upload")
         
+        # Instructions
+        if not (hasattr(st.session_state, 'model_loaded') and st.session_state.model_loaded):
+            st.warning("⏳ Please wait for models to load automatically...")
+        
         # File uploader
         uploaded_file = st.file_uploader(
             "Choose an image file",
             type=['jpg', 'jpeg', 'png', 'bmp', 'tiff'],
-            help="Upload an image to classify its quality"
+            help="Upload an image to classify its quality",
+            disabled=not (hasattr(st.session_state, 'model_loaded') and st.session_state.model_loaded)
         )
 
         # Display uploaded image
@@ -548,7 +421,7 @@ def main():
     with col2:
         st.subheader("📊 Prediction Results")
         
-        if uploaded_file is not None and app.model is not None:
+        if uploaded_file is not None and hasattr(st.session_state, 'model_loaded') and st.session_state.model_loaded and app.model is not None:
             # Predict button
             if st.button("🔮 Predict Quality", type="primary", use_container_width=True):
                 with st.spinner("Analyzing image..."):
@@ -563,11 +436,13 @@ def main():
                         # Create metrics display
                         st.markdown("### Results")
                         
-                        # Quality indicator
+                        # Quality indicator with enhanced styling
                         if predicted_class.lower() == 'good':
                             st.success(f"✅ **Quality: {predicted_class.upper()}**")
+                            quality_color = "🟢"
                         else:
                             st.error(f"❌ **Quality: {predicted_class.upper()}**")
+                            quality_color = "🔴"
                         
                         # Metrics
                         metric_col1, metric_col2 = st.columns(2)
@@ -587,7 +462,7 @@ def main():
                                 "confidence": confidence,
                                 "raw_score": raw_score,
                                 "class_names": result['class_names'],
-                                "prediction_array": result['prediction_array']
+                                "model_used": os.path.basename(app.model_path) if app.model_path else "Unknown"
                             })
                         
                         # Interpretation
@@ -612,76 +487,81 @@ def main():
                         # Confidence interpretation
                         if confidence > 0.9:
                             confidence_text = "Very High Confidence"
-                            confidence_color = "🟢"
+                            confidence_emoji = "🟢"
                         elif confidence > 0.7:
-                            confidence_text = "High Confidence"
-                            confidence_color = "🟡"
+                            confidence_text = "High Confidence" 
+                            confidence_emoji = "🟡"
                         elif confidence > 0.5:
                             confidence_text = "Moderate Confidence"
-                            confidence_color = "🟠"
+                            confidence_emoji = "🟠"
                         else:
                             confidence_text = "Low Confidence"
-                            confidence_color = "🔴"
+                            confidence_emoji = "🔴"
                         
-                        st.info(f"{confidence_color} **{confidence_text}** - The model's certainty level for this prediction.")
+                        st.info(f"{confidence_emoji} **{confidence_text}** - The model's certainty level for this prediction.")
                         
                     else:
                         st.error(f"Prediction failed: {result}")
         
-        elif uploaded_file is not None and app.model is None:
-            st.warning("⚠️ Please load a model first to make predictions.")
-            st.info("Use the sidebar to specify your model directory path and click 'Load Model'.")
-        
+        elif uploaded_file is not None and not (hasattr(st.session_state, 'model_loaded') and st.session_state.model_loaded):
+            st.warning("⚠️ Models are still loading. Please wait...")
+            
         elif uploaded_file is None:
             st.info("📝 Upload an image to see prediction results here.")
             
-            # Show sample instructions
-            st.markdown("### How to use:")
+            # Show usage instructions
+            st.markdown("### 🚀 How it works:")
             st.markdown("""
-            1. **Load Model:** Set the correct path to your model files in the sidebar
-            2. **Upload Image:** Choose an image file (JPG, PNG, etc.)
-            3. **Get Prediction:** Click the 'Predict Quality' button
-            4. **View Results:** See the quality classification and confidence score
+            1. **Auto-Loading**: Models are automatically detected and loaded from the repository
+            2. **Upload Image**: Choose any image file (JPG, PNG, etc.)
+            3. **Get Results**: Click 'Predict Quality' for instant analysis
+            4. **View Details**: Expand 'Advanced Results' for technical details
+            
+            **✨ Features:**
+            - Automatic model detection and loading
+            - Multiple file format support
+            - Detailed confidence scoring
+            - Advanced result analysis
             """)
 
-    # Troubleshooting section
-    if not hasattr(st.session_state, 'model_loaded') or not st.session_state.model_loaded:
+    # Repository info and troubleshooting
+    if not (hasattr(st.session_state, 'model_loaded') and st.session_state.model_loaded):
         st.markdown("---")
-        with st.expander("🆘 Troubleshooting Guide", expanded=False):
+        with st.expander("🆘 Troubleshooting Auto-Loading", expanded=True):
             st.markdown("""
-            ### Common Issues and Solutions:
+            ### Expected Repository Structure:
             
-            **1. "Layer 'dense' expects 1 input(s), but received 2"**
-            - This error occurs with model architecture mismatches
-            - Try loading with `compile=False` (handled automatically in this version)
-            - Ensure TensorFlow versions match between training and inference
+            The app automatically searches for these files:
             
-            **2. "Model directory not found"**
-            - Check if the path is correct
-            - Use `./` for current directory
-            - Ensure both .h5 and .json files are present
-            
-            **3. "Model file not found"**
-            - Verify file names: `image_quality_model.h5` and `model_config.json`
-            - Check file permissions
-            
-            **4. Loading is slow**
-            - Large models take time to load
-            - Consider using model quantization for faster loading
-            
-            ### File Structure Examples:
             ```
-            Option 1 (same directory):
-            ├── app.py
-            ├── image_quality_model.h5
-            ├── model_config.json
+            your_repository/
+            ├── app.py (this file)
+            ├── image_quality_model.h5 ⭐
+            ├── model_config.json ⭐
+            └── other files...
+            ```
             
-            Option 2 (subdirectory):
+            **OR in subdirectories:**
+            ```
+            your_repository/
             ├── app.py
             ├── models/
-            │   ├── image_quality_model.h5
-            │   └── model_config.json
+            │   ├── image_quality_model.h5 ⭐
+            │   └── model_config.json ⭐
+            └── other files...
             ```
+            
+            ### Auto-Loading Process:
+            1. 🔍 Scans common directories (., ./models, ./IQA, etc.)
+            2. 📄 Finds .h5 model files and .json config files
+            3. 🔗 Matches related files by name similarity
+            4. 🤖 Loads models automatically with error handling
+            
+            ### If Auto-Loading Fails:
+            - ✅ Ensure both files are in the repository
+            - ✅ Check file names contain keywords: 'model', 'quality', 'config'
+            - ✅ Verify file permissions are readable
+            - 🔄 Try the 'Reload Models' button in the sidebar
             """)
 
     # Footer
@@ -690,7 +570,7 @@ def main():
         """
         <div style='text-align: center; color: #666; padding: 20px;'>
             <p>🖼️ Image Quality Classifier | Built with Streamlit & TensorFlow</p>
-            <p><em>Enhanced with improved error handling and debugging features</em></p>
+            <p><em>🤖 Featuring Automatic Model Detection and Loading</em></p>
         </div>
         """,
         unsafe_allow_html=True

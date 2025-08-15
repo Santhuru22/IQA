@@ -30,44 +30,18 @@ class ImageQualityStreamlitApp:
             if not config_path.exists():
                 return False, "Model configuration file 'model_config.json' not found!"
 
-            # Check file size and integrity
-            file_size = model_path.stat().st_size
-            if file_size == 0:
-                return False, "Model file 'image_quality_model.h5' is empty!"
-            
-            if file_size < 1000:  # Very small file, likely corrupted
-                return False, f"Model file seems too small ({file_size} bytes). It may be corrupted."
-
             # Load model with caching for better performance
             @st.cache_resource
-            def load_tf_model(model_path_str):
-                try:
-                    # Try loading with compile=False first
-                    return tf.keras.models.load_model(model_path_str, compile=False)
-                except Exception as e1:
-                    try:
-                        # Try with custom objects if needed
-                        return tf.keras.models.load_model(model_path_str, 
-                                                        compile=False, 
-                                                        safe_mode=False)
-                    except Exception as e2:
-                        # If both fail, raise the original error
-                        raise e1
+            def load_tf_model(model_path):
+                return tf.keras.models.load_model(str(model_path))
 
-            self.model = load_tf_model(str(model_path))
-            
-            # Compile the model after loading
-            self.model.compile(
-                optimizer='adam',
-                loss='binary_crossentropy',
-                metrics=['accuracy']
-            )
+            self.model = load_tf_model(model_path)
 
             # Load configuration
             with open(config_path, 'r') as f:
                 self.model_config = json.load(f)
 
-            return True, f"Model loaded successfully from: {model_dir} (File size: {file_size/1024/1024:.2f} MB)"
+            return True, f"Model loaded successfully from: {model_dir}"
 
         except Exception as e:
             return False, f"Failed to load model: {str(e)}"
@@ -127,7 +101,7 @@ class ImageQualityStreamlitApp:
     def predict_image_quality(self, image):
         """Predict image quality"""
         if not self.model:
-            return False, "Model not loaded!"
+            return False, "Please load a model first!"
 
         try:
             processed_image = self.preprocess_image(image)
@@ -156,55 +130,49 @@ def main():
         initial_sidebar_state="expanded"
     )
 
-    # Initialize the app and auto-load model
+    # Initialize the app
     if 'app' not in st.session_state:
         st.session_state.app = ImageQualityStreamlitApp()
-        st.session_state.model_loaded = False
 
     app = st.session_state.app
-
-    # Auto-load model if not already loaded
-    if not st.session_state.model_loaded:
-        model_dir = "./"  # Model files are in the root directory
-        with st.spinner("Loading model..."):
-            success, message = app.load_model_from_path(model_dir)
-            if success:
-                st.session_state.model_loaded = True
-                st.session_state.model_load_message = message
-                st.session_state.model_load_success = True
-            else:
-                st.session_state.model_loaded = False
-                st.session_state.model_load_message = message
-                st.session_state.model_load_success = False
 
     # Main title
     st.title("🖼️ Image Quality Classifier")
     st.markdown("---")
 
-    # Sidebar for model information
+    # Sidebar for model configuration
     with st.sidebar:
-        st.header("📊 Model Status")
+        st.header("📁 Model Configuration")
         
-        # Model status display
-        if st.session_state.model_loaded:
-            st.success("✅ Model Ready")
-            st.info(f"📁 Loaded from: ./")
+        # Model path input
+        model_dir = st.text_input(
+            "Model Directory Path",
+            value="./IQA",
+            help="Path to directory containing image_quality_model.h5 and model_config.json"
+        )
+        
+        # Load model button
+        if st.button("🔄 Load Model", type="primary", use_container_width=True):
+            with st.spinner("Loading model..."):
+                success, message = app.load_model_from_path(model_dir)
+                
+                if success:
+                    st.success(message)
+                    st.session_state.model_loaded = True
+                else:
+                    st.error(message)
+                    st.session_state.model_loaded = False
+
+        # Model status
+        if hasattr(st.session_state, 'model_loaded') and st.session_state.model_loaded:
+            st.success("✅ Model loaded successfully!")
         else:
-            st.error("❌ Model Load Failed")
-            st.error(st.session_state.model_load_message)
+            st.warning("❌ No model loaded")
 
         # Model info
         if app.model_config:
             with st.expander("📊 Model Information", expanded=False):
                 st.markdown(app.get_model_info())
-
-    # Show initial load status message
-    if hasattr(st.session_state, 'model_load_message'):
-        if st.session_state.model_load_success:
-            st.success(st.session_state.model_load_message)
-        else:
-            st.error(st.session_state.model_load_message)
-            st.stop()  # Stop execution if model failed to load
 
     # Main content area
     col1, col2 = st.columns([1, 1])
@@ -232,7 +200,7 @@ def main():
     with col2:
         st.subheader("📊 Prediction Results")
         
-        if uploaded_file is not None:
+        if uploaded_file is not None and app.model is not None:
             # Predict button
             if st.button("🔮 Predict Quality", type="primary", use_container_width=True):
                 with st.spinner("Analyzing image..."):
@@ -283,6 +251,9 @@ def main():
                         
                     else:
                         st.error(result)
+        
+        elif uploaded_file is not None and app.model is None:
+            st.warning("⚠️ Please load a model first to make predictions.")
         
         elif uploaded_file is None:
             st.info("📝 Upload an image to see prediction results here.")

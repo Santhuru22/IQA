@@ -15,33 +15,19 @@ class ImageQualityStreamlitApp:
         self.model = None
         self.model_config = None
         
-    def load_model_from_path(self, model_dir):
-        """Load the trained model and configuration from specified path"""
+    def load_model_from_upload(self, model_file, config_file):
+        """Load the trained model and configuration from uploaded files"""
         try:
-            if not os.path.exists(model_dir):
-                return False, f"Model directory not found: {model_dir}"
+            # Load model from uploaded .h5 file
+            model_buffer = BytesIO(model_file.getvalue())
+            self.model = tf.keras.models.load_model(model_buffer)
 
-            model_path = Path(model_dir) / 'image_quality_model.h5'
-            config_path = Path(model_dir) / 'model_config.json'
-
-            if not model_path.exists():
-                return False, "Model file 'image_quality_model.h5' not found in the specified directory!"
-
-            if not config_path.exists():
-                return False, "Model configuration file 'model_config.json' not found!"
-
-            # Load model with caching for better performance
-            @st.cache_resource
-            def load_tf_model(model_path):
-                return tf.keras.models.load_model(str(model_path))
-
-            self.model = load_tf_model(model_path)
-
-            # Load configuration
-            with open(config_path, 'r') as f:
+            # Load configuration from uploaded .json file
+            config_buffer = BytesIO(config_file.getvalue())
+            with config_buffer as f:
                 self.model_config = json.load(f)
 
-            return True, f"Model loaded successfully from: {model_dir}"
+            return True, "Model loaded successfully from uploaded files"
 
         except Exception as e:
             return False, f"Failed to load model: {str(e)}"
@@ -140,21 +126,18 @@ def main():
     st.title("🖼️ Image Quality Classifier")
     st.markdown("---")
 
-    # Sidebar for model configuration
+    # Sidebar for model upload
     with st.sidebar:
-        st.header("📁 Model Configuration")
+        st.header("📁 Model Upload")
         
-        # Model path input
-        model_dir = st.text_input(
-            "Model Directory Path",
-            value="./IQA",
-            help="Path to directory containing image_quality_model.h5 and model_config.json"
-        )
+        # File uploaders for model and config
+        model_file = st.file_uploader("Upload Model File (image_quality_model.h5)", type=['h5'])
+        config_file = st.file_uploader("Upload Configuration File (model_config.json)", type=['json'])
         
         # Load model button
-        if st.button("🔄 Load Model", type="primary", use_container_width=True):
+        if st.button("🔄 Load Model", type="primary", use_container_width=True) and model_file and config_file:
             with st.spinner("Loading model..."):
-                success, message = app.load_model_from_path(model_dir)
+                success, message = app.load_model_from_upload(model_file, config_file)
                 
                 if success:
                     st.success(message)

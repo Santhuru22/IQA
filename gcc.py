@@ -12,7 +12,7 @@ import tempfile
 
 class ImageQualityStreamlitApp:
     def __init__(self):
-        """Initialize the Streamlit Image Quality Classifier"""
+        """Initialize the Streamlit Image Quality Analyser"""
         self.model = None
         self.model_config = None
         
@@ -254,7 +254,7 @@ def main():
     st.markdown(
         """
         <div style='text-align: center; color: #666; padding: 20px;'>
-            <p>🖼️ Image Quality Classifier | Santhuru S</p>
+            <p>🖼️ Image Quality Analyser | Santhuru S</p>
         </div>
         """,
         unsafe_allow_html=True

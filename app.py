@@ -249,7 +249,7 @@ def main():
 
     # Configure Streamlit page
     st.set_page_config(
-        page_title="Image Quality Classifier",
+        page_title="Image Quality Analyzer",
         page_icon="🖼️",
         layout="wide",
         initial_sidebar_state="expanded"
@@ -445,7 +445,7 @@ def main():
     st.markdown(
         f"""
         <div style='text-align: center; color: #666; padding: 20px;'>
-            <p>🖼️ Image Quality Classifier | 
+            <p>🖼️ Image Quality Analyzer | 
             <a href="https://github.com/{app.github_user}/{app.github_repo}" target="_blank" style="text-decoration: none;">
             GitHub Repository</a></p>
             <p><strong>Developed by Santhuru S</strong></p>

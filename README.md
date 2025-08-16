@@ -8,6 +8,7 @@ A machine learning-powered tool for automatically assessing and classifying imag
 - **Deep Learning Model**: Trained neural network for accurate quality prediction
 - **Batch Processing**: Analyze multiple images efficiently
 - **GUI Interface**: User-friendly graphical interface for easy interaction
+- **Web Interface**: Streamlit-based web application for easy deployment
 - **Training History Visualization**: Monitor model performance during training
 - **Configurable Parameters**: Customizable model settings via JSON configuration
 
@@ -46,8 +47,19 @@ dataset/
    - Matplotlib
    - PIL (Pillow)
    - tkinter (for GUI)
+   - streamlit (for web deployment)
 
 ## 🚀 Quick Start
+
+### Using the Web Application (Streamlit)
+
+Deploy and run the web interface locally:
+
+```bash
+streamlit run app.py
+```
+
+The application will be available at `http://localhost:8501`
 
 ### Using the GUI Application
 
@@ -79,6 +91,12 @@ image = preprocess_image('path/to/your/image.jpg')
 prediction = model.predict(image)
 quality = "Good" if prediction[0] > 0.5 else "Bad"
 print(f"Image quality: {quality}")
+```
+
+## 🌐 Deployment
+
+#### Streamlit Cloud
+ Visit  https://imagequalityanalyzerbysanta.streamlit.app/
 ```
 
 ## 📊 Training Your Own Model
@@ -169,7 +187,6 @@ print(f"Quality: {quality} (Confidence: {confidence:.2f})")
 3. Commit your changes (`git commit -m 'Add amazing feature'`)
 4. Push to the branch (`git push origin feature/amazing-feature`)
 5. Open a Pull Request
-
 
 ## 🙏 Acknowledgments
 

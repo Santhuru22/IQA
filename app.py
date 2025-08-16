@@ -2,20 +2,37 @@ import json
 import numpy as np
 from PIL import Image
 import streamlit as st
-import matplotlib.pyplot as plt
 from io import BytesIO
 import tempfile
 import requests
 import os
 
-# Check for TensorFlow availability
-@st.cache_resource
-def check_tensorflow():
+# Only import what's absolutely necessary
+REQUIRED_MODULES = {
+    'tensorflow': False,
+    'matplotlib': False,
+}
+
+@st.cache_data
+def check_dependencies():
+    """Check which dependencies are available"""
+    results = {}
+    
+    # Check TensorFlow
     try:
         import tensorflow as tf
-        return True, tf
+        results['tensorflow'] = (True, tf)
     except ImportError as e:
-        return False, str(e)
+        results['tensorflow'] = (False, str(e))
+    
+    # Check matplotlib (optional)
+    try:
+        import matplotlib.pyplot as plt
+        results['matplotlib'] = (True, plt)
+    except ImportError:
+        results['matplotlib'] = (False, "Not available")
+    
+    return results
 
 def main():
     # Configure Streamlit page
@@ -26,36 +43,65 @@ def main():
         initial_sidebar_state="expanded"
     )
 
-    # Check TensorFlow availability
-    has_tf, tf_result = check_tensorflow()
+    # Check dependencies
+    deps = check_dependencies()
     
-    if not has_tf:
-        st.error("❌ TensorFlow is not available!")
-        st.error(f"Error: {tf_result}")
+    # Check TensorFlow (required)
+    if not deps['tensorflow'][0]:
+        st.error("❌ **TensorFlow is required but not available!**")
+        st.error(f"Error details: {deps['tensorflow'][1]}")
+        
         st.markdown("""
-        ### Possible Solutions:
-        1. **For Streamlit Cloud**: Try using `tensorflow-cpu` instead of `tensorflow`
-        2. **Check your requirements.txt**:
-        ```
-        streamlit==1.29.0
+        ### 🛠️ Fix TensorFlow Installation
+        
+        **For Streamlit Cloud deployment**, update your `requirements.txt`:
+        ```txt
+        streamlit
         tensorflow-cpu==2.13.1
         numpy==1.24.3
-        Pillow==10.0.1
-        requests==2.31.0
+        Pillow
+        requests
         ```
-        3. **For local development**: Install TensorFlow:
+        
+        **For local development**:
         ```bash
         pip install tensorflow-cpu==2.13.1
         ```
+        
+        **Alternative lightweight requirements.txt**:
+        ```txt
+        streamlit==1.28.0
+        tensorflow-cpu==2.13.1
+        numpy==1.24.3
+        Pillow==9.5.0
+        requests==2.31.0
+        ```
+        
+        ### 🔄 After updating requirements.txt:
+        1. Push changes to GitHub
+        2. Redeploy your Streamlit app
+        3. Wait for installation to complete
         """)
         st.stop()
     
-    tf = tf_result
+    # Get TensorFlow module
+    tf = deps['tensorflow'][1]
+    
+    # Show dependency status
+    with st.sidebar:
+        st.markdown("### 📦 Dependencies")
+        st.success("✅ TensorFlow: Available")
+        if deps['matplotlib'][0]:
+            st.success("✅ Matplotlib: Available")
+        else:
+            st.info("ℹ️ Matplotlib: Not needed")
 
     class ImageQualityApp:
         def __init__(self):
             self.model = None
             self.model_config = None
+            
+            # GitHub repository settings
             self.github_user = "Santhuru22"
             self.github_repo = "IQA"
             self.github_branch = "main"
@@ -63,42 +109,47 @@ def main():
             self.config_filename = "model_config.json"
         
         def get_github_raw_url(self, filename):
+            """Generate GitHub raw file URL"""
             return f"https://raw.githubusercontent.com/{self.github_user}/{self.github_repo}/{self.github_branch}/{filename}"
         
         def download_file_from_github(self, filename):
+            """Download file from GitHub repository"""
             url = self.get_github_raw_url(filename)
+            
             try:
-                response = requests.get(url, timeout=60)
-                response.raise_for_status()
+                with st.spinner(f"Downloading {filename}..."):
+                    response = requests.get(url, timeout=60)
+                    response.raise_for_status()
                 return True, response.content
             except requests.exceptions.RequestException as e:
                 return False, f"Failed to download {filename}: {str(e)}"
         
         @st.cache_resource
         def load_model_from_github(_self):
+            """Load model and config from GitHub with caching"""
             try:
                 # Download model file
                 success, model_content = _self.download_file_from_github(_self.model_filename)
                 if not success:
                     return False, model_content
                 
-                # Download configuration file
+                # Download configuration
                 success, config_content = _self.download_file_from_github(_self.config_filename)
                 if not success:
                     return False, config_content
                 
-                # Save model to temporary file and load it
+                # Create temporary file for model
                 with tempfile.NamedTemporaryFile(delete=False, suffix=".h5") as tmp_file:
                     tmp_file.write(model_content)
                     tmp_path = tmp_file.name
                 
-                # Load the model
+                # Load model
                 model = tf.keras.models.load_model(tmp_path)
                 
-                # Clean up
+                # Clean up temporary file
                 os.unlink(tmp_path)
                 
-                # Load configuration
+                # Parse configuration
                 config = json.loads(config_content.decode('utf-8'))
                 
                 return True, (model, config)
@@ -107,30 +158,42 @@ def main():
                 return False, f"Failed to load model: {str(e)}"
         
         def preprocess_image(self, image, config):
+            """Preprocess image for model prediction"""
             img_size = tuple(config.get('img_size', [224, 224]))
             
-            # Convert PIL to numpy
+            # Convert PIL image to numpy array
             img_array = np.array(image)
             
-            # Ensure RGB
-            if len(img_array.shape) == 3 and img_array.shape[2] == 4:
-                img_array = img_array[:, :, :3]
-            elif len(img_array.shape) == 2:
+            # Handle different image formats
+            if len(img_array.shape) == 3:
+                if img_array.shape[2] == 4:  # RGBA
+                    img_array = img_array[:, :, :3]  # Convert to RGB
+                elif img_array.shape[2] == 1:  # Grayscale with single channel
+                    img_array = np.stack([img_array[:, :, 0]] * 3, axis=-1)
+            elif len(img_array.shape) == 2:  # Grayscale
                 img_array = np.stack([img_array] * 3, axis=-1)
             
-            # Resize using PIL
+            # Resize using PIL (more reliable than cv2)
             pil_img = Image.fromarray(img_array.astype('uint8'))
             pil_img = pil_img.resize(img_size, Image.Resampling.LANCZOS)
             
-            # Normalize and add batch dimension
-            processed = np.array(pil_img).astype(np.float32) / 255.0
+            # Convert back to numpy and normalize
+            processed = np.array(pil_img, dtype=np.float32) / 255.0
+            
+            # Add batch dimension
             return np.expand_dims(processed, axis=0)
         
         def predict_quality(self, image, model, config):
+            """Predict image quality"""
             try:
-                processed = self.preprocess_image(image, config)
-                prediction = model.predict(processed, verbose=0)[0][0]
+                # Preprocess image
+                processed_image = self.preprocess_image(image, config)
                 
+                # Make prediction
+                with st.spinner("Making prediction..."):
+                    prediction = model.predict(processed_image, verbose=0)[0][0]
+                
+                # Interpret results
                 class_names = config.get('class_names', ['bad', 'good'])
                 predicted_class = class_names[1] if prediction > 0.5 else class_names[0]
                 confidence = prediction if prediction > 0.5 else 1 - prediction
@@ -141,130 +204,188 @@ def main():
                     'raw_score': prediction,
                     'class_names': class_names
                 }
+                
             except Exception as e:
                 return False, f"Prediction failed: {str(e)}"
 
     # Initialize app
-    if 'app' not in st.session_state:
-        st.session_state.app = ImageQualityApp()
+    if 'app_instance' not in st.session_state:
+        st.session_state.app_instance = ImageQualityApp()
 
-    app = st.session_state.app
+    app = st.session_state.app_instance
 
-    # Title
+    # Main title
     st.title("🖼️ Image Quality Classifier")
+    st.markdown("*Automatically detects good vs bad quality images using AI*")
     st.markdown("---")
 
-    # Sidebar
+    # Sidebar for model management
     with st.sidebar:
-        st.header("🔧 Model Status")
+        st.header("🤖 Model Management")
         
-        if st.button("📥 Load Model from GitHub", type="primary"):
-            with st.spinner("Loading model from GitHub..."):
-                success, result = app.load_model_from_github()
-                
-                if success:
-                    st.session_state.model, st.session_state.config = result
-                    st.success("✅ Model loaded successfully!")
-                else:
-                    st.error(f"❌ {result}")
+        # Model loading button
+        if st.button("📥 Load Model from GitHub", type="primary", use_container_width=True):
+            success, result = app.load_model_from_github()
+            
+            if success:
+                st.session_state.model, st.session_state.config = result
+                st.success("✅ Model loaded successfully!")
+                st.rerun()
+            else:
+                st.error(f"❌ {result}")
 
-        # Check if model is loaded
+        # Model status
         model_loaded = hasattr(st.session_state, 'model') and st.session_state.model is not None
         
         if model_loaded:
-            st.success("✅ Model Ready")
-            config = st.session_state.config
+            st.success("✅ **Model Status:** Ready")
             
-            with st.expander("📊 Model Info"):
-                st.write(f"**Classes:** {', '.join(config.get('class_names', ['bad', 'good']))}")
-                st.write(f"**Image Size:** {config.get('img_size', [224, 224])}")
-                metrics = config.get('metrics', {})
-                if metrics:
-                    st.write(f"**Accuracy:** {metrics.get('accuracy', 0):.3f}")
+            # Model information
+            config = st.session_state.config
+            st.markdown("**Model Details:**")
+            st.write(f"• Classes: {', '.join(config.get('class_names', ['bad', 'good']))}")
+            st.write(f"• Input Size: {config.get('img_size', [224, 224])}")
+            
+            # Performance metrics
+            metrics = config.get('metrics', {})
+            if metrics:
+                st.markdown("**Performance:**")
+                if 'accuracy' in metrics:
+                    st.write(f"• Accuracy: {metrics['accuracy']:.3f}")
+                if 'val_accuracy' in metrics:
+                    st.write(f"• Val Accuracy: {metrics['val_accuracy']:.3f}")
         else:
-            st.warning("❌ No model loaded")
+            st.warning("❌ **Model Status:** Not loaded")
 
-    # Main content
+        st.markdown("---")
+        st.markdown(f"**Repository:** [{app.github_user}/{app.github_repo}](https://github.com/{app.github_user}/{app.github_repo})")
+
+    # Main content area
     col1, col2 = st.columns([1, 1])
 
     with col1:
-        st.subheader("📤 Image Upload")
+        st.subheader("📤 Upload Image")
+        
         uploaded_file = st.file_uploader(
-            "Choose an image file",
-            type=['jpg', 'jpeg', 'png', 'bmp', 'tiff']
+            "Choose an image file to analyze",
+            type=['jpg', 'jpeg', 'png', 'bmp', 'tiff', 'webp'],
+            help="Supported formats: JPG, PNG, BMP, TIFF, WebP"
         )
 
         if uploaded_file:
+            # Display uploaded image
             image = Image.open(uploaded_file)
             if image.mode != 'RGB':
                 image = image.convert('RGB')
-            st.image(image, caption=f"Uploaded: {uploaded_file.name}", use_column_width=True)
+            
+            st.image(
+                image, 
+                caption=f"📁 {uploaded_file.name} ({image.size[0]}×{image.size[1]})",
+                use_column_width=True
+            )
 
     with col2:
-        st.subheader("📊 Prediction Results")
+        st.subheader("🔍 Analysis Results")
         
         if uploaded_file and model_loaded:
-            if st.button("🔮 Predict Quality", type="primary"):
-                with st.spinner("Analyzing..."):
-                    success, result = app.predict_quality(
-                        image, 
-                        st.session_state.model, 
-                        st.session_state.config
-                    )
+            if st.button("🚀 Analyze Image Quality", type="primary", use_container_width=True):
+                success, result = app.predict_quality(
+                    image, 
+                    st.session_state.model, 
+                    st.session_state.config
+                )
+                
+                if success:
+                    pred_class = result['predicted_class']
+                    confidence = result['confidence']
+                    raw_score = result['raw_score']
                     
-                    if success:
-                        pred_class = result['predicted_class']
-                        confidence = result['confidence']
-                        raw_score = result['raw_score']
-                        
-                        st.markdown("### Results")
-                        
-                        if pred_class.lower() == 'good':
-                            st.success(f"✅ **Quality: {pred_class.upper()}**")
-                        else:
-                            st.error(f"❌ **Quality: {pred_class.upper()}**")
-                        
-                        col_a, col_b = st.columns(2)
-                        with col_a:
-                            st.metric("Confidence", f"{confidence*100:.1f}%")
-                        with col_b:
-                            st.metric("Raw Score", f"{raw_score:.4f}")
-                        
-                        st.progress(confidence)
-                        
-                        st.markdown("### Interpretation")
-                        quality_emoji = "🟢" if pred_class.lower() == 'good' else "🔴"
-                        st.markdown(f"""
-                        {quality_emoji} The image appears to be of **{pred_class.upper()}** quality.
-                        
-                        The model is **{confidence*100:.1f}%** confident in this prediction.
-                        """)
+                    # Results header
+                    st.markdown("### 📊 Prediction Results")
+                    
+                    # Quality status
+                    if pred_class.lower() == 'good':
+                        st.success(f"✅ **Image Quality: {pred_class.upper()}**")
+                        quality_color = "🟢"
                     else:
-                        st.error(result)
+                        st.error(f"❌ **Image Quality: {pred_class.upper()}**")
+                        quality_color = "🔴"
+                    
+                    # Metrics display
+                    metric_col1, metric_col2 = st.columns(2)
+                    with metric_col1:
+                        st.metric(
+                            label="Confidence",
+                            value=f"{confidence:.1%}",
+                            help="How confident the model is in its prediction"
+                        )
+                    with metric_col2:
+                        st.metric(
+                            label="Raw Score",
+                            value=f"{raw_score:.4f}",
+                            help="Raw prediction score (0=bad, 1=good)"
+                        )
+                    
+                    # Confidence bar
+                    st.markdown("**Confidence Level:**")
+                    st.progress(confidence)
+                    
+                    # Detailed interpretation
+                    st.markdown("### 💡 Interpretation")
+                    st.markdown(f"""
+                    {quality_color} **Analysis:** The model predicts this image has **{pred_class.upper()}** quality.
+                    
+                    **Confidence:** The model is **{confidence:.1%}** confident in this assessment.
+                    
+                    **Technical Details:**
+                    - Raw prediction score: `{raw_score:.4f}`
+                    - Threshold: `0.5` (scores > 0.5 = good, ≤ 0.5 = bad)
+                    - Model classes: `{', '.join(result['class_names'])}`
+                    """)
+                    
+                    # Additional info
+                    if confidence < 0.7:
+                        st.warning("⚠️ **Note:** Low confidence prediction. The image quality may be borderline.")
+                    elif confidence > 0.9:
+                        st.info("🎯 **Note:** High confidence prediction. The model is very certain about this assessment.")
+                
+                else:
+                    st.error(f"❌ **Error:** {result}")
+                    st.markdown("Please try with a different image or reload the model.")
         
         elif uploaded_file and not model_loaded:
-            st.warning("⚠️ Please load the model first.")
-        else:
-            st.info("📝 Upload an image to see results.")
+            st.warning("⚠️ **Please load the model first** using the button in the sidebar.")
+            
+        elif not uploaded_file:
+            st.info("📝 **Upload an image** on the left to see analysis results here.")
 
-    # Auto-load model on startup
-    if not model_loaded and 'auto_load_tried' not in st.session_state:
-        st.session_state.auto_load_tried = True
-        with st.spinner("Auto-loading model..."):
+    # Auto-load model on first visit
+    if not model_loaded and 'auto_load_attempted' not in st.session_state:
+        st.session_state.auto_load_attempted = True
+        
+        with st.spinner("🔄 Auto-loading model from GitHub..."):
             success, result = app.load_model_from_github()
+            
             if success:
                 st.session_state.model, st.session_state.config = result
-                st.success("✅ Model auto-loaded!")
+                st.success("🎉 Model auto-loaded successfully!")
                 st.rerun()
+            else:
+                st.info("ℹ️ Auto-load failed. Please use the 'Load Model' button in the sidebar.")
 
     # Footer
     st.markdown("---")
     st.markdown(
         f"""
-        <div style='text-align: center; color: #666;'>
-            <p>🖼️ Image Quality Analyser | <a href="https://github.com/{app.github_user}/{app.github_repo}">GitHub</a></p>
+        <div style='text-align: center; color: #666; padding: 10px;'>
+            <p>
+                🖼️ <strong>Image Quality Classifier</strong> | 
+                Developed by <strong>Santhuru S</strong> | 
+                <a href="https://github.com/{app.github_user}/{app.github_repo}" target="_blank">View on GitHub</a>
+            </p>
         </div>
-        """, unsafe_allow_html=True
+        """, 
+        unsafe_allow_html=True
     )
 
 if __name__ == "__main__":

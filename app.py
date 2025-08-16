@@ -1,6 +1,5 @@
 import json
 import numpy as np
-import cv2
 from PIL import Image
 import tensorflow as tf
 from pathlib import Path
@@ -11,6 +10,14 @@ from io import BytesIO
 import tempfile
 import requests
 from urllib.parse import urljoin
+
+# Try to import cv2, use PIL as fallback
+try:
+    import cv2
+    HAS_CV2 = True
+except ImportError:
+    HAS_CV2 = False
+    st.warning("⚠️ OpenCV not available. Using PIL for image processing.")
 
 class ImageQualityStreamlitApp:
     def __init__(self):
@@ -144,11 +151,27 @@ class ImageQualityStreamlitApp:
         # Ensure RGB format
         if len(image_array.shape) == 3 and image_array.shape[2] == 3:
             image_rgb = image_array
+        elif len(image_array.shape) == 3 and image_array.shape[2] == 4:
+            # Handle RGBA images
+            image_rgb = image_array[:, :, :3]
         else:
-            image_rgb = cv2.cvtColor(image_array, cv2.COLOR_BGR2RGB)
+            # Convert grayscale to RGB
+            if len(image_array.shape) == 2:
+                image_rgb = np.stack([image_array] * 3, axis=-1)
+            else:
+                image_rgb = image_array
             
-        # Resize image to match model input
-        image_resized = cv2.resize(image_rgb, img_size)
+        # Resize image using different methods based on available libraries
+        if HAS_CV2:
+            # Use OpenCV for resizing
+            image_resized = cv2.resize(image_rgb, img_size)
+        else:
+            # Use PIL for resizing (fallback)
+            pil_img = Image.fromarray(image_rgb.astype('uint8'))
+            pil_img = pil_img.resize(img_size, Image.Resampling.LANCZOS)
+            image_resized = np.array(pil_img)
+        
+        # Normalize to [0,1] and add batch dimension
         image_processed = image_resized.astype(np.float32) / 255.0
         image_processed = np.expand_dims(image_processed, axis=0)  # Add batch dimension
 

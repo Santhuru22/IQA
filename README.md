@@ -17,7 +17,7 @@ A machine learning-powered tool for automatically assessing and classifying imag
 dataset/
 ├── bad/                    # Low quality image samples
 ├── good/                   # High quality image samples
-├── gcc.py                  # Streamlit deploy to host
+├── app.py                  # Streamlit deploy to host
 ├── data_collection.py      # Data preprocessing and collection utilities
 ├── gui.py                  # Graphical user interface
 ├── image_quality_model.h5  # Trained Keras/TensorFlow model

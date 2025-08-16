@@ -262,7 +262,7 @@ def main():
     app = st.session_state.app
 
     # Main title
-    st.title("🖼️ Image Quality Classifier")
+    st.title("🖼️ Image Quality Analyzer")
     st.markdown("*Analyze your images to determine if they are good or bad quality*")
     st.markdown("---")
 
